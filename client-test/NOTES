@@ -1,0 +1,36 @@
+
+./byfn.sh generate
+./byfn.sh up -a -l node
+
+
+DBG: installResponse=Error: access denied for [install]: Failed verifying that proposal's creator satisfies local MSP principal during channelless check policy with policy [Admins]: [The identity is not an admin under this MSP [Org1MSP]: The identity does not contain OU [ADMIN], MSP: [Org1MSP]],Error: access denied for [install]: Failed verifying that proposal's creator satisfies local MSP principal during channelless check policy with policy [Admins]: [The identity is not an admin under this MSP [Org1MSP]: The identity does not contain OU [ADMIN], MSP: [Org1MSP]],.protos.Proposal
+
+fabric-ca/lib/serverenroll.go:301:
+// Set the OU fields of the sign request based on the identity's type and affilation.
+// For example, if the type is 'peer' and the affiliation is 'a.b.c', the
+// OUs become 'OU=c,OU=b,OU=a,OU=peer'.
+// This is necessary because authorization decisions are made based on the OU fields,
+// so we ignore any OU values specified in the enroll request and set them according
+// to the type and affiliation.
+
+
+1. There seems to be an 'admin' user, as we don't need to register it
+2. It's doesn't have the 'admin' role, and it cannot be added later either
+3. But it can create other users, even with 'admin' role
+
+
+
+
+Some inconsistencies:
+
+nodejs sdk: class RegisterRequest
+golang sdk: class RegistrationRequest
+
+From nodejs sdk: "... regRequest.type = role; ..."
+
+So 'type' means 'role'...
+
+"Once connected, it can then access individual Network instances (channels) using the getNetwork method which..."
+
+So 'network' means 'channel'... (Not exactly: Network = a Channel + a Contract + a CheckpointerFactory???)
+
