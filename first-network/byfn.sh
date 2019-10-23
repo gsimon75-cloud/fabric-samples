@@ -158,7 +158,10 @@ function networkUp() {
   fi
 
   # now run the end to end script
-  docker exec cli scripts/script.sh $CHANNEL_NAME $CLI_DELAY $LANGUAGE $CLI_TIMEOUT $VERBOSE $NO_CHAINCODE || die "ERROR !!!! Test failed"
+  if [ "$NO_CHAINCODE" != "true" ]; then
+    CHAINCODE_NAME="mycc"
+  fi
+  docker exec cli scripts/script.sh $CHANNEL_NAME $CLI_DELAY $LANGUAGE $CLI_TIMEOUT $VERBOSE $CHAINCODE_NAME || die "ERROR !!!! Test failed"
 }
 
 
@@ -271,9 +274,9 @@ function networkDown() {
     fi
 
     # remove orderer block and other channel configuration transactions and certs
-    rm -rf channel-artifacts/*.block channel-artifacts/*.tx crypto-config ./org3-artifacts/crypto-config/ channel-artifacts/org3.json
+    echo FAKE rm -rf channel-artifacts/*.block channel-artifacts/*.tx crypto-config ./org3-artifacts/crypto-config/ channel-artifacts/org3.json
     # remove the docker-compose yaml file that was customized to the example
-    rm -f docker-compose-e2e.yaml
+    echo FAKE rm -f docker-compose-e2e.yaml
   fi
 }
 
