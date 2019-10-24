@@ -28,10 +28,9 @@
 
 # prepending $PWD/../bin to PATH to ensure we are picking up the correct binaries
 # this may be commented out to resolve installed version of tools if desired
-export PATH=${PWD}/../bin:${PWD}:$PATH
-export FABRIC_CFG_PATH=${PWD}
+export PATH=$PWD/../bin:$PWD:$PATH
+export FABRIC_CFG_PATH=$PWD
 export VERBOSE=false
-
 
 set -vx
 
@@ -90,6 +89,13 @@ function yaml_expand_nl {
 # Versions of fabric known not to work with this release of first-network
 BLACKLISTED_VERSIONS="1.0.* 1.1.0-preview 1.1.0-alpha"
 
+declare -A CONSENSUS_PROFILES
+CONSENSUS_PROFILES=(
+  [solo]="TwoOrgsOrdererGenesis"
+  [kafka]="SampleDevModeKafka"
+  [etcdraft]="SampleMultiNodeEtcdRaft"
+)
+
 # Generate the needed certificates, the genesis block and start the network.
 function networkUp() {
   # Do some basic sanity checking to make sure that the appropriate versions of fabric
@@ -98,7 +104,7 @@ function networkUp() {
   # Note, we check configtxlator externally because it does not require a config file, and peer in the
   # docker image because of FAB-8551 that makes configtxlator return 'development version' in docker
   LOCAL_VERSION=$(configtxlator version | sed -ne 's/ Version: //p')
-  DOCKER_IMAGE_VERSION=$(docker run --rm hyperledger/fabric-tools:$IMAGETAG peer version | sed -ne 's/ Version: //p' | head -1)
+  DOCKER_IMAGE_VERSION=$(docker run --rm hyperledger/fabric-tools:$IMAGE_TAG peer version | sed -ne 's/ Version: //p' | head -1)
 
   echo "LOCAL_VERSION=$LOCAL_VERSION"
   echo "DOCKER_IMAGE_VERSION=$DOCKER_IMAGE_VERSION"
@@ -111,51 +117,48 @@ function networkUp() {
   fi
 
   for UNSUPPORTED_VERSION in $BLACKLISTED_VERSIONS; do
-    if [[ $LOCAL_VERSION == $UNSUPPORTED_VERSION ]]; then
+    if [[ "$LOCAL_VERSION" == "$UNSUPPORTED_VERSION" ]]; then
       die "ERROR! Local Fabric binary version of $LOCAL_VERSION does not match this newer version of BYFN and is unsupported. Either move to a later version of Fabric or checkout an earlier version of fabric-samples."
     fi
 
-    if [[ $DOCKER_IMAGE_VERSION == $UNSUPPORTED_VERSION ]]; then
+    if [[ "$DOCKER_IMAGE_VERSION" == "$UNSUPPORTED_VERSION" ]]; then
       die "ERROR! Fabric Docker image version of $DOCKER_IMAGE_VERSION does not match this newer version of BYFN and is unsupported. Either move to a later version of Fabric or checkout an earlier version of fabric-samples."
     fi
   done
 
   # generate artifacts if they don't exist
-  [ -d "crypto-config" ] || die "Please run '$0 generate' first!"
+  [ -d crypto-config ] || die "Please run '$0 generate' first!"
 
-  COMPOSE_FILES="-f ${COMPOSE_FILE}"
+  COMPOSE_FILES="-f $COMPOSE_FILE"
 
-  if [ "${CERTIFICATE_AUTHORITIES}" == "true" ]; then
-    COMPOSE_FILES="${COMPOSE_FILES} -f ${COMPOSE_FILE_CA}"
-    export BYFN_CA1_PRIVATE_KEY=$(cd crypto-config/peerOrganizations/org1.example.com/ca && ls *_sk)
-    export BYFN_CA2_PRIVATE_KEY=$(cd crypto-config/peerOrganizations/org2.example.com/ca && ls *_sk)
+  if [ "$CERTIFICATE_AUTHORITIES" == "true" ]; then
+    COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_CA"
+    export BYFN_CA1_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org1.example.com/ca/*_sk)
+    export BYFN_CA2_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org2.example.com/ca/*_sk)
   fi
 
-  if [ "${CONSENSUS_TYPE}" == "kafka" ]; then
-    COMPOSE_FILES="${COMPOSE_FILES} -f ${COMPOSE_FILE_KAFKA}"
-  elif [ "${CONSENSUS_TYPE}" == "etcdraft" ]; then
-    COMPOSE_FILES="${COMPOSE_FILES} -f ${COMPOSE_FILE_RAFT2}"
+  case "$CONSENSUS_TYPE" in
+    kafka) COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_KAFKA";;
+    etcdraft) COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_RAFT2";;
+  esac
+
+  if [ "$IF_COUCHDB" == "couchdb" ]; then
+    COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_COUCH"
   fi
 
-  if [ "${IF_COUCHDB}" == "couchdb" ]; then
-    COMPOSE_FILES="${COMPOSE_FILES} -f ${COMPOSE_FILE_COUCH}"
-  fi
-
-  IMAGE_TAG=$IMAGETAG docker-compose ${COMPOSE_FILES} up -d 2>&1
+  docker-compose $COMPOSE_FILES up -d 2>&1
 
   docker ps -a || die "ERROR !!!! Unable to start network"
 
-  if [ "$CONSENSUS_TYPE" == "kafka" ]; then
-    sleep 1
+  case "$CONSENSUS_TYPE" in
+    kafka)
     echo "Sleeping 10s to allow $CONSENSUS_TYPE cluster to complete booting"
-    sleep 9
-  fi
+    sleep 10;;
 
-  if [ "$CONSENSUS_TYPE" == "etcdraft" ]; then
-    sleep 1
+    etcdraft)
     echo "Sleeping 15s to allow $CONSENSUS_TYPE cluster to complete booting"
-    sleep 14
-  fi
+    sleep 15;;
+  esac
 
   # now run the end to end script
   if [ "$NO_CHAINCODE" != "true" ]; then
@@ -169,7 +172,7 @@ function networkUp() {
 # Stop the orderer and peers, backup the ledger for orderer and peers, cleanup chaincode containers and images
 # and relaunch the orderer and peers with latest tag
 function upgradeNetwork() {
-  if [[ "$IMAGETAG" == *"1.4"* ]] || [[ $IMAGETAG == "latest" ]]; then
+  if [[ "$IMAGE_TAG" == "1.4.*" || "$IMAGE_TAG" == "latest" ]]; then
     docker inspect -f '{{.Config.Volumes}}' orderer.example.com | grep -q '/var/hyperledger/production/orderer' || die "ERROR !!!! This network does not appear to start with fabric-samples >= v1.3.x?"
 
     LEDGERS_BACKUP=./ledgers-backup
@@ -177,20 +180,20 @@ function upgradeNetwork() {
     # create ledger-backup directory
     mkdir -p $LEDGERS_BACKUP
 
-    export IMAGE_TAG=$IMAGETAG
-    COMPOSE_FILES="-f ${COMPOSE_FILE}"
-    if [ "${CERTIFICATE_AUTHORITIES}" == "true" ]; then
-      COMPOSE_FILES="${COMPOSE_FILES} -f ${COMPOSE_FILE_CA}"
-      export BYFN_CA1_PRIVATE_KEY=$(cd crypto-config/peerOrganizations/org1.example.com/ca && ls *_sk)
-      export BYFN_CA2_PRIVATE_KEY=$(cd crypto-config/peerOrganizations/org2.example.com/ca && ls *_sk)
+    COMPOSE_FILES="-f $COMPOSE_FILE"
+    if [ "$CERTIFICATE_AUTHORITIES" == "true" ]; then
+      COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_CA"
+      export BYFN_CA1_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org1.example.com/ca/*_sk)
+      export BYFN_CA2_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org2.example.com/ca/*_sk)
     fi
-    if [ "${CONSENSUS_TYPE}" == "kafka" ]; then
-      COMPOSE_FILES="${COMPOSE_FILES} -f ${COMPOSE_FILE_KAFKA}"
-    elif [ "${CONSENSUS_TYPE}" == "etcdraft" ]; then
-      COMPOSE_FILES="${COMPOSE_FILES} -f ${COMPOSE_FILE_RAFT2}"
-    fi
-    if [ "${IF_COUCHDB}" == "couchdb" ]; then
-      COMPOSE_FILES="${COMPOSE_FILES} -f ${COMPOSE_FILE_COUCH}"
+
+    case "$CONSENSUS_TYPE" in
+      kafka) COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_KAFKA";;
+      etcdraft) COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_RAFT2";;
+    esac
+    
+    if [ "$IF_COUCHDB" == "couchdb" ]; then
+      COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_COUCH"
     fi
 
     # removing the cli container
@@ -210,14 +213,8 @@ function upgradeNetwork() {
       docker cp -a $PEER:/var/hyperledger/production $LEDGERS_BACKUP/$PEER/
 
       # Remove any old containers and images for this peer
-      CC_CONTAINERS=$(docker ps | grep dev-$PEER | awk '{print $1}')
-      if [ -n "$CC_CONTAINERS" ]; then
-        docker rm -f $CC_CONTAINERS
-      fi
-      CC_IMAGES=$(docker images | grep dev-$PEER | awk '{print $1}')
-      if [ -n "$CC_IMAGES" ]; then
-        docker rmi -f $CC_IMAGES
-      fi
+      docker ps -f "NAME=dev-$PEER-*" --format "{{.ID}}" | xargs -r docker rm -f
+      docker images -f "REFERENCE=dev-$PEER-*" --format "{{.ID}}" | xargs -r docker rmi -f
 
       # Start the peer again
       docker-compose $COMPOSE_FILES up -d --no-deps $PEER
@@ -250,28 +247,15 @@ function networkDown() {
     # Bring down the network, deleting the volumes
 
     #Delete any ledger backups
-    docker run -v $PWD:/tmp/first-network --rm hyperledger/fabric-tools:$IMAGETAG rm -Rf /tmp/first-network/ledgers-backup
+    docker run -v $PWD:/tmp/first-network --rm hyperledger/fabric-tools:$IMAGE_TAG rm -Rf /tmp/first-network/ledgers-backup
 
     #Cleanup the chaincode containers
-    # Obtain CONTAINER_IDS and remove them
-    # TODO Might want to make this optional - could clear other containers
-    CONTAINER_IDS=$(docker ps -a | awk '($2 ~ /dev-peer.*.mycc.*/) {print $1}')
-    if [ -z "$CONTAINER_IDS" -o "$CONTAINER_IDS" == " " ]; then
-      echo "---- No containers available for deletion ----"
-    else
-      docker rm -f $CONTAINER_IDS
-    fi
+    # Obtain CONTAINER_IDS and remove them, TODO Might want to make this optional - could clear other containers
+    docker ps -a | awk '($2 ~ /dev-peer.*.mycc.*/) {print $1}' | xargs -r docker rm -f
 
     #Cleanup images
-    # Delete any images that were generated as a part of this setup
-    # specifically the following images are often left behind:
-    # TODO list generated image naming patterns
-    DOCKER_IMAGE_IDS=$(docker images | awk '($1 ~ /dev-peer.*.mycc.*/) {print $3}')
-    if [ -z "$DOCKER_IMAGE_IDS" -o "$DOCKER_IMAGE_IDS" == " " ]; then
-      echo "---- No images available for deletion ----"
-    else
-      docker rmi -f $DOCKER_IMAGE_IDS
-    fi
+    # Delete any images that were generated as a part of this setup specifically the following images are often left behind:
+    docker images | awk '($1 ~ /dev-peer.*.mycc.*/) {print $3}' | xargs -r docker rmi -f
 
     # remove orderer block and other channel configuration transactions and certs
     echo FAKE rm -rf channel-artifacts/*.block channel-artifacts/*.tx crypto-config ./org3-artifacts/crypto-config/ channel-artifacts/org3.json
@@ -397,53 +381,32 @@ function generateArtifacts() {
   echo "##########################################################"
   # Note: For some unknown reason (at least for now) the block file can't be
   # named orderer.genesis.block or the orderer will fail to launch!
-  echo "CONSENSUS_TYPE="$CONSENSUS_TYPE
-  #set -x
-  if [ "$CONSENSUS_TYPE" == "solo" ]; then
-    configtxgen \
-      -profile TwoOrgsOrdererGenesis \
+  echo "CONSENSUS_TYPE=$CONSENSUS_TYPE"
+  CONSENSUS_PROFILE=${CONSENSUS_PROFILES[$CONSENSUS_TYPE]}
+  [ -n "$CONSENSUS_PROFILE" ] || die "Unrecognized CONSESUS_TYPE='$CONSENSUS_TYPE'"
+
+  configtxgen \
+      -profile $CONSENSUS_PROFILE \
       -channelID $SYS_CHANNEL \
-      -outputBlock ./channel-artifacts/genesis.block
-  elif [ "$CONSENSUS_TYPE" == "kafka" ]; then
-    configtxgen \
-      -profile SampleDevModeKafka \
-      -channelID $SYS_CHANNEL \
-      -outputBlock ./channel-artifacts/genesis.block
-  elif [ "$CONSENSUS_TYPE" == "etcdraft" ]; then
-    configtxgen \
-      -profile SampleMultiNodeEtcdRaft \
-      -channelID $SYS_CHANNEL \
-      -outputBlock ./channel-artifacts/genesis.block
-  else
-    #set +x
-    echo "unrecognized CONSESUS_TYPE='$CONSENSUS_TYPE'. exiting"
-    exit 1
-  fi || die "Failed to generate orderer genesis block..."
-  #set +x
+      -outputBlock ./channel-artifacts/genesis.block || die "Failed to generate orderer genesis block..."
 
   echo
   echo "#################################################################"
   echo "### Generating channel configuration transaction 'channel.tx' ###"
   echo "#################################################################"
-  #set -x
   configtxgen -profile TwoOrgsChannel -outputCreateChannelTx ./channel-artifacts/channel.tx -channelID $CHANNEL_NAME || die "Failed to generate channel configuration transaction..."
-  #set +x
 
   echo
   echo "#################################################################"
   echo "#######    Generating anchor peer update for Org1MSP   ##########"
   echo "#################################################################"
-  #set -x
   configtxgen -profile TwoOrgsChannel -outputAnchorPeersUpdate ./channel-artifacts/Org1MSPanchors.tx -channelID $CHANNEL_NAME -asOrg Org1MSP || die "Failed to generate anchor peer update for Org1MSP..."
-  #set +x
 
   echo
   echo "#################################################################"
   echo "#######    Generating anchor peer update for Org2MSP   ##########"
   echo "#################################################################"
-  #set -x
   configtxgen -profile TwoOrgsChannel -outputAnchorPeersUpdate ./channel-artifacts/Org2MSPanchors.tx -channelID $CHANNEL_NAME -asOrg Org2MSP || die "Failed to generate anchor peer update for Org2MSP..."
-  #set +x
   echo
 }
 
@@ -454,7 +417,7 @@ function generateArtifacts() {
 # native binaries for your platform, e.g., darwin-amd64 or linux-amd64
 OS_SYSTEM="$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/mingw64_nt.*/windows/')"
 OS_MACHINE="$(uname -m | tr '[:upper:]' '[:lower:]' | sed 's/x86_64/amd64/g')"
-OS_ARCH="${OS_SYSTEM}-${OS_MACHINE}"
+OS_ARCH="$OS_SYSTEM-$OS_MACHINE"
 
 # timeout duration - the duration the CLI should wait for a response from
 # another container before giving up
@@ -489,14 +452,14 @@ COMPOSE_FILE_CA=docker-compose-ca.yaml
 LANGUAGE=golang
 
 # default image tag
-IMAGETAG="latest"
+IMAGE_TAG="latest"
 
 # default consensus type
 CONSENSUS_TYPE="solo"
 
 # Parse commandline args
 [ "$1" = "-m" ] && shift # supports old usage, muscle memory is powerful!
-MODE=$1
+MODE="$1"
 shift
 # Determine whether starting, stopping, restarting, generating or upgrading
 case "$MODE" in
@@ -511,51 +474,52 @@ esac
 while getopts "h?c:t:d:f:s:l:i:o:anv" opt; do
   case "$opt" in
     h | \?) printHelp; exit 0;;
-    c) CHANNEL_NAME=$OPTARG ;;
-    t) CLI_TIMEOUT=$OPTARG ;;
-    d) CLI_DELAY=$OPTARG ;;
-    f) COMPOSE_FILE=$OPTARG ;;
-    s) IF_COUCHDB=$OPTARG ;;
-    l) LANGUAGE=$OPTARG ;;
-    i) IMAGETAG=$(go env GOARCH)"-"$OPTARG ;;
-    o) CONSENSUS_TYPE=$OPTARG ;;
-    a) CERTIFICATE_AUTHORITIES=true ;;
-    n) NO_CHAINCODE=true ;;
-    v) VERBOSE=true ;;
+    c) CHANNEL_NAME=$OPTARG;;
+    t) CLI_TIMEOUT=$OPTARG;;
+    d) CLI_DELAY=$OPTARG;;
+    f) COMPOSE_FILE=$OPTARG;;
+    s) IF_COUCHDB=$OPTARG;;
+    l) LANGUAGE=$OPTARG;;
+    i) IMAGE_TAG="$(go env GOARCH)-$OPTARG";;
+    o) CONSENSUS_TYPE=$OPTARG;;
+    a) CERTIFICATE_AUTHORITIES=true;;
+    n) NO_CHAINCODE=true;;
+    v) VERBOSE=true;;
   esac
 done
+
+export IMAGE_TAG
 
 
 # Announce what was requested
 echo
-echo -n "${EXPMODE} for channel '${CHANNEL_NAME}' with CLI timeout of '${CLI_TIMEOUT}' seconds and CLI delay of '${CLI_DELAY}' seconds"
-if [ "${IF_COUCHDB}" == "couchdb" ]; then
-  echo " and using database '${IF_COUCHDB}'"
+echo -n "$EXPMODE for channel '$CHANNEL_NAME' with CLI timeout of '$CLI_TIMEOUT' seconds and CLI delay of '$CLI_DELAY' seconds"
+if [ "$IF_COUCHDB" == "couchdb" ]; then
+  echo " and using database '$IF_COUCHDB'"
 else
   echo ""
 fi
 
 # Ask user for confirmation to proceed
-while true; do
-  read -p "Continue? [Y/n] " ans
-  case "$ans" in
-    y | Y | "") echo "proceeding ..."; break;;
-    n | N) echo "exiting..."; exit 1;;
-    *) echo "invalid response";;
-  esac
-done
+if [ -t 0 ]; then
+  while true; do
+    read -p "Continue? [Y/n] " ans
+    case "${ans,,}" in
+      y | "") echo "proceeding ..."; break;;
+      n) echo "exiting..."; exit 1;;
+      *) echo "invalid response";;
+    esac
+  done
+fi
 
 
-#Create the network using docker compose
+# Create the network using docker compose
 case "$MODE" in
   up) networkUp;;
   down) networkDown;; ## Clear the network
   generate) generateArtifacts;; ## Generate Artifacts
   restart) networkDown && networkUp;; ## Restart the network
   upgrade) upgradeNetwork;; ## Upgrade the network from version 1.2.x to 1.3.x
-  *)
-    printHelp
-    exit 1
 esac
 
 # vim: set sw=2 ts=2 et:

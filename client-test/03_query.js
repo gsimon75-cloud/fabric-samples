@@ -2,49 +2,54 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-'use strict';
+"use strict";
+const util = require("util");
 
-const { FileSystemWallet, Gateway } = require('fabric-network');
-const path = require('path');
+const { FileSystemWallet, Gateway } = require("fabric-network");
+const path = require("path");
 
-const ccpPath = 'connection-org1.json';
+// connection params
+const ccp_path = "connection-org1.json";
+const user_name = "user1";
+
+// chaincode params
+const channel_name = "mychannel";
+const chaincode_id = "mycc";
 
 async function main() {
     try {
+        const wallet_path = path.join(process.cwd(), "wallet");
+        console.log("Opening wallet; path='" + wallet_path + "'");
+        const wallet = new FileSystemWallet(wallet_path);
 
-        // Create a new file system based wallet for managing identities.
-        const walletPath = path.join(process.cwd(), 'wallet');
-        const wallet = new FileSystemWallet(walletPath);
-        console.log(`Wallet path: ${walletPath}`);
-
-        // Check to see if we've already enrolled the user.
-        const userExists = await wallet.exists('user1');
-        if (!userExists) {
-            console.log('An identity for the user "user1" does not exist in the wallet');
-            console.log('Run the registerUser.js application before retrying');
+        console.log("Checking for user; name='" + user_name + "'");
+        const user_exists = await wallet.exists(user_name);
+        if (!user_exists) {
+            console.log("No such user; user='" + user_name + "'");
+            console.log("Run the registerUser.js application before retrying");
             return;
         }
 
-        // Create a new gateway for connecting to our peer node.
+        console.log("Connecting to gateway;");
         const gateway = new Gateway();
-        await gateway.connect(ccpPath, { wallet, identity: 'user1', discovery: { enabled: true, asLocalhost: true } });
+        await gateway.connect(ccp_path, { wallet, identity: user_name, discovery: { enabled: true, asLocalhost: true } });
 
-        // Get the network (channel) our contract is deployed to.
-        const network = await gateway.getNetwork('mychannel');
+        console.log("Getting network and contract;");
+        const network = await gateway.getNetwork(channel_name);
+        const contract = network.getContract(chaincode_id);
 
-        // Get the contract from the network.
-        const contract = network.getContract('mycc');
+        console.log("Sending the query;");
+        const result = await contract.evaluateTransaction("query", process.argv[1 + 1]);
+        console.log("Query evaluated; result='" + result.toString() + "'");
 
-        // Evaluate the specified transaction.
-        // queryCar transaction - requires 1 argument, ex: ('queryCar', 'CAR4')
-        // queryAllCars transaction - requires no arguments, ex: ('queryAllCars')
-        const result = await contract.evaluateTransaction('query', process.argv[1 + 1]);
-        console.log(`Transaction has been evaluated, result is: ${result.toString()}`);
-
-    } catch (error) {
-        console.error(`Failed to evaluate transaction: ${error}`);
+        await gateway.disconnect();
+    }
+    catch (error) {
+        console.error("Operation failed; error='" + util.inspect(error) + "'");
         process.exit(1);
     }
 }
 
 main();
+
+// vim: set sw=4 ts=4 et:

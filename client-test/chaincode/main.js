@@ -21,8 +21,8 @@ var Chaincode = class {
     }
 
     let A = args[0];
-    let B = args[2];
     let Aval = args[1];
+    let B = args[2];
     let Bval = args[3];
 
     if (typeof parseInt(Aval) !== 'number' || typeof parseInt(Bval) !== 'number') {
