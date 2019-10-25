@@ -64,7 +64,6 @@ async function main() {
         await wallet.import("admin", identity);
 
         console.log("Success;");
-        await gateway.disconnect();
     }
     catch (error) {
         console.error("Operation failed; error='" + util.inspect(error) + "'");

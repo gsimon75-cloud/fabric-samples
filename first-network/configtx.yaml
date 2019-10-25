@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
+# This file is processed by `configtxgen`, invoked from `./byfn.sh generate`
+
 ---
 ################################################################################
 #

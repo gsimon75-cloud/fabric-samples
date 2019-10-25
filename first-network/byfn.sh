@@ -36,6 +36,7 @@ set -vx
 
 # Print the usage message
 function printHelp() {
+  set +vx
   echo "Usage: "
   echo "  byfn.sh <mode> [-c <channel name>] [-t <timeout>] [-d <delay>] [-f <docker-compose-file>] [-s <dbtype>] [-l <language>] [-o <consensus-type>] [-i <imagetag>] [-a] [-n] [-v]"
   echo "    <mode> - one of 'up', 'down', 'restart', 'generate' or 'upgrade'"
