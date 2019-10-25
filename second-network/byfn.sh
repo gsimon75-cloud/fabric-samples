@@ -38,40 +38,16 @@ set -vx
 function printHelp() {
   set +vx
   echo "Usage: "
-  echo "  byfn.sh <mode> [-c <channel name>] [-t <timeout>] [-d <delay>] [-f <docker-compose-file>] [-s <dbtype>] [-l <language>] [-o <consensus-type>] [-i <imagetag>] [-a] [-n] [-v]"
-  echo "    <mode> - one of 'up', 'down', 'restart', 'generate' or 'upgrade'"
-  echo "      - 'up' - bring up the network with docker-compose up"
-  echo "      - 'down' - clear the network with docker-compose down"
-  echo "      - 'restart' - restart the network"
+  echo "  byfn.sh <mode> [-c <channel name>] [-s <dbtype>] [-i <imagetag>]"
+  echo "    <mode> - one of 'up', 'down', 'restart', 'generate' or 'mrproper'"
   echo "      - 'generate' - generate required certificates and genesis block"
-  echo "      - 'upgrade'  - upgrade the network from version 1.3.x to 1.4.0"
+  echo "      - 'up' - bring up the network with docker-compose up"
+  echo "      - 'restart' - restart the network"
+  echo "      - 'down' - clear the network with docker-compose down"
+  echo "      - 'mrproper' - wipe generated config data as well"
   echo "    -c <channel name> - channel name to use (defaults to \"mychannel\")"
-  echo "    -t <timeout> - CLI timeout duration in seconds (defaults to 10)"
-  echo "    -d <delay> - delay duration in seconds (defaults to 3)"
-  echo "    -f <docker-compose-file> - specify which docker-compose file use (defaults to docker-compose-cli.yaml)"
-  echo "    -s <dbtype> - the database backend to use: goleveldb (default) or couchdb"
-  echo "    -l <language> - the chaincode language: golang (default) or node"
-  echo "    -o <consensus-type> - the consensus-type of the ordering service: solo (default), kafka, or etcdraft"
   echo "    -i <imagetag> - the tag to be used to launch the network (defaults to \"latest\")"
-  echo "    -a - launch certificate authorities (no certificate authorities are launched by default)"
-  echo "    -n - do not deploy chaincode (abstore chaincode is deployed by default)"
-  echo "    -v - verbose mode"
-  echo "  byfn.sh -h (print this message)"
-  echo
-  echo "Typically, one would first generate the required certificates and "
-  echo "genesis block, then bring up the network. e.g.:"
-  echo
-  echo "        byfn.sh generate -c mychannel"
-  echo "        byfn.sh up -c mychannel -s couchdb"
-  echo "        byfn.sh up -c mychannel -s couchdb -i 1.4.0"
-  echo "        byfn.sh up -l node"
-  echo "        byfn.sh down -c mychannel"
-  echo "        byfn.sh upgrade -c mychannel"
-  echo
-  echo "Taking all defaults:"
-  echo "        byfn.sh generate"
-  echo "        byfn.sh up"
-  echo "        byfn.sh down"
+  echo "    -h (print this message)"
 }
 
 function die {
@@ -89,13 +65,6 @@ function yaml_expand_nl {
 
 # Versions of fabric known not to work with this release of first-network
 BLACKLISTED_VERSIONS="1.0.* 1.1.0-preview 1.1.0-alpha"
-
-declare -A CONSENSUS_PROFILES
-CONSENSUS_PROFILES=(
-  [solo]="TwoOrgsOrdererGenesis"
-  [kafka]="SampleDevModeKafka"
-  [etcdraft]="SampleMultiNodeEtcdRaft"
-)
 
 # Generate the needed certificates, the genesis block and start the network.
 function networkUp() {
@@ -130,141 +99,42 @@ function networkUp() {
   # generate artifacts if they don't exist
   [ -d crypto-config ] || die "Please run '$0 generate' first!"
 
-  COMPOSE_FILES="-f $COMPOSE_FILE"
+  export BYFN_CA1_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org1.example.com/ca/*_sk)
+  export BYFN_CA2_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org2.example.com/ca/*_sk)
 
-  if [ "$CERTIFICATE_AUTHORITIES" == "true" ]; then
-    COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_CA"
-    export BYFN_CA1_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org1.example.com/ca/*_sk)
-    export BYFN_CA2_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org2.example.com/ca/*_sk)
-  fi
-
-  case "$CONSENSUS_TYPE" in
-    kafka) COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_KAFKA";;
-    etcdraft) COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_RAFT2";;
-  esac
-
-  if [ "$IF_COUCHDB" == "couchdb" ]; then
-    COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_COUCH"
-  fi
-
-  docker-compose $COMPOSE_FILES up -d 2>&1
+  docker-compose -f $COMPOSE_FILE_CLI -f $COMPOSE_FILE_CA -f $COMPOSE_FILE_COUCH up -d 2>&1
 
   docker ps -a || die "ERROR !!!! Unable to start network"
 
-  case "$CONSENSUS_TYPE" in
-    kafka)
-    echo "Sleeping 10s to allow $CONSENSUS_TYPE cluster to complete booting"
-    sleep 10;;
-
-    etcdraft)
-    echo "Sleeping 15s to allow $CONSENSUS_TYPE cluster to complete booting"
-    sleep 15;;
-  esac
-
-  # now run the end to end script
-  if [ "$NO_CHAINCODE" != "true" ]; then
-    CHAINCODE_NAME="mycc"
-  fi
-  docker exec cli scripts/script.sh $CHANNEL_NAME $CLI_DELAY $LANGUAGE $CLI_TIMEOUT $VERBOSE $CHAINCODE_NAME || die "ERROR !!!! Test failed"
+  docker exec cli scripts/script.sh $CHANNEL_NAME || die "ERROR !!!! Test failed"
 }
 
 
-# Upgrade the network components which are at version 1.3.x to 1.4.x
-# Stop the orderer and peers, backup the ledger for orderer and peers, cleanup chaincode containers and images
-# and relaunch the orderer and peers with latest tag
-function upgradeNetwork() {
-  if [[ "$IMAGE_TAG" == "1.4.*" || "$IMAGE_TAG" == "latest" ]]; then
-    docker inspect -f '{{.Config.Volumes}}' orderer.example.com | grep -q '/var/hyperledger/production/orderer' || die "ERROR !!!! This network does not appear to start with fabric-samples >= v1.3.x?"
-
-    LEDGERS_BACKUP=./ledgers-backup
-
-    # create ledger-backup directory
-    mkdir -p $LEDGERS_BACKUP
-
-    COMPOSE_FILES="-f $COMPOSE_FILE"
-    if [ "$CERTIFICATE_AUTHORITIES" == "true" ]; then
-      COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_CA"
-      export BYFN_CA1_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org1.example.com/ca/*_sk)
-      export BYFN_CA2_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org2.example.com/ca/*_sk)
-    fi
-
-    case "$CONSENSUS_TYPE" in
-      kafka) COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_KAFKA";;
-      etcdraft) COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_RAFT2";;
-    esac
-    
-    if [ "$IF_COUCHDB" == "couchdb" ]; then
-      COMPOSE_FILES="$COMPOSE_FILES -f $COMPOSE_FILE_COUCH"
-    fi
-
-    # removing the cli container
-    docker-compose $COMPOSE_FILES stop cli
-    docker-compose $COMPOSE_FILES up -d --no-deps cli
-
-    echo "Upgrading orderer"
-    docker-compose $COMPOSE_FILES stop orderer.example.com
-    docker cp -a orderer.example.com:/var/hyperledger/production/orderer $LEDGERS_BACKUP/orderer.example.com
-    docker-compose $COMPOSE_FILES up -d --no-deps orderer.example.com
-
-    for PEER in peer0.org1.example.com peer1.org1.example.com peer0.org2.example.com peer1.org2.example.com; do
-      echo "Upgrading peer $PEER"
-
-      # Stop the peer and backup its ledger
-      docker-compose $COMPOSE_FILES stop $PEER
-      docker cp -a $PEER:/var/hyperledger/production $LEDGERS_BACKUP/$PEER/
-
-      # Remove any old containers and images for this peer
-      docker ps -f "NAME=dev-$PEER-*" --format "{{.ID}}" | xargs -r docker rm -f
-      docker images -f "REFERENCE=dev-$PEER-*" --format "{{.ID}}" | xargs -r docker rmi -f
-
-      # Start the peer again
-      docker-compose $COMPOSE_FILES up -d --no-deps $PEER
-    done
-
-    docker exec cli sh -c "SYS_CHANNEL=$CH_NAME && scripts/upgrade_to_v14.sh $CHANNEL_NAME $CLI_DELAY $LANGUAGE $CLI_TIMEOUT $VERBOSE" || die "ERROR !!!! Test failed"
-  else
-    echo "ERROR !!!! Pass the v1.4.x image tag"
-  fi
+function networkStop() {
+  docker-compose -f $COMPOSE_FILE_COUCH -f $COMPOSE_FILE_CA down --volumes --remove-orphans
 }
 
 
-# Tear down running network
-function networkDown() {
-  # stop org3 containers also in addition to org1 and org2, in case we were running sample to add org3
-  # stop kafka and zookeeper containers in case we're running with kafka consensus-type
-  docker-compose \
-    -f $COMPOSE_FILE \
-    -f $COMPOSE_FILE_COUCH \
-    -f $COMPOSE_FILE_KAFKA \
-    -f $COMPOSE_FILE_RAFT2 \
-    -f $COMPOSE_FILE_CA \
-    -f $COMPOSE_FILE_ORG3 \
-    down \
-    --volumes \
-    --remove-orphans
-
+function networkDestroy() {
   # Don't remove the generated artifacts -- note, the ledgers are always removed
-  if [ "$MODE" != "restart" ]; then
-    # Bring down the network, deleting the volumes
+  # Bring down the network, deleting the volumes
 
-    #Delete any ledger backups
-    docker run -v $PWD:/tmp/first-network --rm hyperledger/fabric-tools:$IMAGE_TAG rm -Rf /tmp/first-network/ledgers-backup
+  #Delete any ledger backups
+  docker run -v $PWD:/tmp/first-network --rm hyperledger/fabric-tools:$IMAGE_TAG rm -Rf /tmp/first-network/ledgers-backup
 
-    #Cleanup the chaincode containers
-    # Obtain CONTAINER_IDS and remove them, TODO Might want to make this optional - could clear other containers
-    docker ps -a | awk '($2 ~ /dev-peer.*.mycc.*/) {print $1}' | xargs -r docker rm -f
+  #Cleanup the chaincode containers
+  docker ps -a | awk '($2 ~ /dev-peer.*.mycc.*/) {print $1}' | xargs -r docker rm -f
 
-    #Cleanup images
-    # Delete any images that were generated as a part of this setup specifically the following images are often left behind:
-    docker images | awk '($1 ~ /dev-peer.*.mycc.*/) {print $3}' | xargs -r docker rmi -f
-
-    # remove orderer block and other channel configuration transactions and certs
-    echo FAKE rm -rf channel-artifacts/*.block channel-artifacts/*.tx crypto-config ./org3-artifacts/crypto-config/ channel-artifacts/org3.json
-    # remove the docker-compose yaml file that was customized to the example
-    echo FAKE rm -f docker-compose-e2e.yaml
-  fi
+  #Cleanup images
+  # Delete any images that were generated as a part of this setup specifically the following images are often left behind:
+  docker images | awk '($1 ~ /dev-peer.*.mycc.*/) {print $3}' | xargs -r docker rmi -f
 }
 
+
+function mrproper() {
+    # remove orderer block and other channel configuration transactions and certs
+    rm -rf channel-artifacts/*.block channel-artifacts/*.tx crypto-config
+}
 
 
 function generateArtifacts() {
@@ -324,18 +194,6 @@ function generateArtifacts() {
   envsubst < ccp-template.json > connection-org2.json
   envsubst < ccp-template.yaml | yaml_expand_nl > connection-org2.yaml
 
-
-  #replacePrivateKey
-  # Using docker-compose-e2e-template.yaml, replace constants with private key file names
-  # generated by the cryptogen tool and output a docker-compose.yaml specific to this
-  # configuration
-  # The next steps will replace the template's contents with the
-  # actual values of the private key file names for the two CAs.
-  export CA1_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org1.example.com/ca/*_sk)
-  export CA2_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org2.example.com/ca/*_sk)
-
-  envsubst '$CA1_PRIVATE_KEY $CA2_PRIVATE_KEY' <docker-compose-e2e-template.yaml >docker-compose-e2e.yaml
-
   # The `configtxgen tool is used to create four artifacts:
   #    orderer **bootstrap block**
   #    fabric **channel configuration transaction**
@@ -382,10 +240,7 @@ function generateArtifacts() {
   echo "##########################################################"
   # Note: For some unknown reason (at least for now) the block file can't be
   # named orderer.genesis.block or the orderer will fail to launch!
-  echo "CONSENSUS_TYPE=$CONSENSUS_TYPE"
-  CONSENSUS_PROFILE=${CONSENSUS_PROFILES[$CONSENSUS_TYPE]}
-  [ -n "$CONSENSUS_PROFILE" ] || die "Unrecognized CONSESUS_TYPE='$CONSENSUS_TYPE'"
-
+  CONSENSUS_PROFILE="TwoOrgsOrdererGenesis"
   configtxgen \
       -profile $CONSENSUS_PROFILE \
       -channelID $SYS_CHANNEL \
@@ -420,107 +275,52 @@ OS_SYSTEM="$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/mingw64_nt.*/windows
 OS_MACHINE="$(uname -m | tr '[:upper:]' '[:lower:]' | sed 's/x86_64/amd64/g')"
 OS_ARCH="$OS_SYSTEM-$OS_MACHINE"
 
-# timeout duration - the duration the CLI should wait for a response from
-# another container before giving up
-CLI_TIMEOUT=10
-
-# default for delay between commands
-CLI_DELAY=3
-
 # system channel name defaults to "byfn-sys-channel"
 SYS_CHANNEL="byfn-sys-channel"
 
 # channel name defaults to "mychannel"
 CHANNEL_NAME="mychannel"
 
-# use this as the default docker-compose yaml definition
-COMPOSE_FILE=docker-compose-cli.yaml
-COMPOSE_FILE_COUCH=docker-compose-couch.yaml
-
-# org3 docker compose file
-COMPOSE_FILE_ORG3=docker-compose-org3.yaml
-
-# kafka and zookeeper compose file
-COMPOSE_FILE_KAFKA=docker-compose-kafka.yaml
-
-# two additional etcd/raft orderers
-COMPOSE_FILE_RAFT2=docker-compose-etcdraft2.yaml
+COMPOSE_FILE_CLI=docker-compose-cli.yaml
 
 # certificate authorities compose file
 COMPOSE_FILE_CA=docker-compose-ca.yaml
 
-# use golang as the default language for chaincode
-LANGUAGE=golang
+# use this as the default docker-compose yaml definition
+COMPOSE_FILE_COUCH=docker-compose-couch.yaml
 
 # default image tag
 IMAGE_TAG="latest"
 
-# default consensus type
-CONSENSUS_TYPE="solo"
-
-# Parse commandline args
-[ "$1" = "-m" ] && shift # supports old usage, muscle memory is powerful!
 MODE="$1"
 shift
-# Determine whether starting, stopping, restarting, generating or upgrading
-case "$MODE" in
-  up) EXPMODE="Starting";;
-  down) EXPMODE="Stopping";;
-  restart) EXPMODE="Restarting";;
-  generate) EXPMODE="Generating certs and genesis block";;
-  upgrade) EXPMODE="Upgrading the network";;
-  *) printHelp; exit 1;;
-esac
-
-while getopts "h?c:t:d:f:s:l:i:o:anv" opt; do
+while getopts "h?c:i:" opt; do
   case "$opt" in
     h | \?) printHelp; exit 0;;
     c) CHANNEL_NAME=$OPTARG;;
-    t) CLI_TIMEOUT=$OPTARG;;
-    d) CLI_DELAY=$OPTARG;;
-    f) COMPOSE_FILE=$OPTARG;;
-    s) IF_COUCHDB=$OPTARG;;
-    l) LANGUAGE=$OPTARG;;
     i) IMAGE_TAG="$(go env GOARCH)-$OPTARG";;
-    o) CONSENSUS_TYPE=$OPTARG;;
-    a) CERTIFICATE_AUTHORITIES=true;;
-    n) NO_CHAINCODE=true;;
     v) VERBOSE=true;;
   esac
 done
 
 export IMAGE_TAG
 
-
-# Announce what was requested
-echo
-echo -n "$EXPMODE for channel '$CHANNEL_NAME' with CLI timeout of '$CLI_TIMEOUT' seconds and CLI delay of '$CLI_DELAY' seconds"
-if [ "$IF_COUCHDB" == "couchdb" ]; then
-  echo " and using database '$IF_COUCHDB'"
-else
-  echo ""
-fi
-
-# Ask user for confirmation to proceed
-if [ -t 0 ]; then
-  while true; do
-    read -p "Continue? [Y/n] " ans
-    case "${ans,,}" in
-      y | "") echo "proceeding ..."; break;;
-      n) echo "exiting..."; exit 1;;
-      *) echo "invalid response";;
-    esac
-  done
-fi
-
-
-# Create the network using docker compose
 case "$MODE" in
-  up) networkUp;;
-  down) networkDown;; ## Clear the network
-  generate) generateArtifacts;; ## Generate Artifacts
-  restart) networkDown && networkUp;; ## Restart the network
-  upgrade) upgradeNetwork;; ## Upgrade the network from version 1.2.x to 1.3.x
+  up)
+    echo Starting
+    networkUp;;
+  down)
+    echo Stopping
+    networkStop && networkDestroy;;
+  generate)
+    echo Generating certs and genesis block
+    generateArtifacts;;
+  restart)
+    echo Restarting
+    networkStop && networkUp;;
+  mrproper)
+    echo Wiping config data
+    mrproper;;
 esac
 
 # vim: set sw=2 ts=2 et:
