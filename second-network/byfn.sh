@@ -106,12 +106,14 @@ function networkUp() {
 
   docker ps -a || die "ERROR !!!! Unable to start network"
 
-  docker exec cli scripts/script.sh $CHANNEL_NAME || die "ERROR !!!! Test failed"
+  #docker exec cli scripts/script.sh $CHANNEL_NAME || die "ERROR !!!! Test failed"
 }
 
 
 function networkStop() {
-  docker-compose -f $COMPOSE_FILE_COUCH -f $COMPOSE_FILE_CA down --volumes --remove-orphans
+  export BYFN_CA1_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org1.example.com/ca/*_sk)
+  export BYFN_CA2_PRIVATE_KEY=$(basename crypto-config/peerOrganizations/org2.example.com/ca/*_sk)
+  docker-compose -f $COMPOSE_FILE_CLI -f $COMPOSE_FILE_COUCH -f $COMPOSE_FILE_CA down --volumes --remove-orphans
 }
 
 

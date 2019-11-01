@@ -11,6 +11,9 @@ echo "Build your first network (BYFN) end-to-end test"
 echo "(with local modifications)"
 echo
 
+# NOTE: There are no 'export'-s in this file, because:
+# "On invocation, the shell scans its own environment and creates a parameter
+#  for each name found, automatically marking it for export to child processes."
 set -o pipefail
 set -x
 
@@ -28,37 +31,28 @@ die() {
     exit 1
 }
 
-if [ "$CORE_PEER_TLS_ENABLED" = "false" ]; then
-    unset CORE_PEER_TLS_ENABLED
-    die "Non-TLS is no longer supported"
-fi
-
-CC_SRC_PATH="/opt/gopath/src/github.com/chaincode/chaincode_example02/node/"
+#CC_SRC_PATH="/opt/gopath/src/github.com/chaincode/chaincode_example02/node/"
 
 echo "Channel name : "$CHANNEL_NAME
 
 ORDERER_CA="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem"
-ORDERER_LOCALMSPID="OrdererMSP"
-ORDERER_TLS_ROOTCERT_FILE="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem"
-ORDERER_MSPCONFIGPATH="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/example.com/users/Admin@example.com/msp"
+#ORDERER_TLS_ROOTCERT_FILE="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem"
+#ORDERER_MSPCONFIGPATH="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/example.com/users/Admin@example.com/msp"
 ORDERER_ADDRESS="orderer.example.com:7050"
 
 PEER_LOCALMSPIDS=(
     [1]="Org1MSP"
     [2]="Org2MSP"
-    [3]="Org3MSP"
 )
 
 PEER_TLS_ROOTCERT_FILES=(
     [1]="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt"
     [2]="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt"
-    [3]="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/org3.example.com/peers/peer0.org3.example.com/tls/ca.crt"
 )
 
 PEER_MSPCONFIGPATHS=(
     [1]="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp"
     [2]="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/org2.example.com/users/Admin@org2.example.com/msp"
-    [3]="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/org3.example.com/users/Admin@org3.example.com/msp"
 )
 
 declare -A PEER_ADDRESSES # index: "org,peer"
@@ -67,8 +61,6 @@ PEER_ADDRESSES=(
     [1,1]="peer1.org1.example.com:8051"
     [2,0]="peer0.org2.example.com:9051"
     [2,1]="peer1.org2.example.com:10051"
-    [3,0]="peer0.org3.example.com:11051"
-    [3,1]="peer1.org3.example.com:12051"
 )
 
 setGlobals() {
@@ -79,10 +71,6 @@ setGlobals() {
   CORE_PEER_TLS_ROOTCERT_FILE="${PEER_TLS_ROOTCERT_FILES[$ORG]}"
   CORE_PEER_MSPCONFIGPATH="${PEER_MSPCONFIGPATHS[$ORG]}"
   CORE_PEER_ADDRESS="${PEER_ADDRESSES[$ORG,$PEER]}"
-
-  if [ -z "$CORE_PEER_LOCALMSPID" ]; then
-      echo "================== ERROR !!! ORG Unknown =================="
-  fi
 }
 
 
@@ -91,7 +79,7 @@ updateAnchorPeers() {
   ORG=$2
   setGlobals $PEER $ORG
 
-  peer channel update -o $ORDERER_ADDRESS -c $CHANNEL_NAME -f ./channel-artifacts/${CORE_PEER_LOCALMSPID}anchors.tx --tls $CORE_PEER_TLS_ENABLED --cafile $ORDERER_CA | tee log.txt || die "Anchor peer update failed"
+  peer channel update -o $ORDERER_ADDRESS -c $CHANNEL_NAME -f ./channel-artifacts/${CORE_PEER_LOCALMSPID}anchors.tx --tls --cafile $ORDERER_CA | tee log.txt || die "Anchor peer update failed"
   echo "===================== Anchor peers updated for org '$CORE_PEER_LOCALMSPID' on channel '$CHANNEL_NAME' ===================== "
   sleep $DELAY
   echo
@@ -119,7 +107,7 @@ joinChannelWithRetry() {
 ## Create channel
 echo "Creating channel..."
 setGlobals 0 1
-peer channel create -o $ORDERER_ADDRESS -c $CHANNEL_NAME -f ./channel-artifacts/channel.tx --tls $CORE_PEER_TLS_ENABLED --cafile $ORDERER_CA | tee log.txt || die "Channel creation failed"
+peer channel create -o $ORDERER_ADDRESS -c $CHANNEL_NAME -f ./channel-artifacts/channel.tx --tls --cafile $ORDERER_CA | tee log.txt || die "Channel creation failed"
 echo "===================== Channel '$CHANNEL_NAME' created ===================== "
 echo
 

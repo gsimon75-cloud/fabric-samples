@@ -10,7 +10,7 @@
   },
   "engine-strict": true,
   "engineStrict": true,
-  "version": "0.3.7",
+  "version": "0.3.2",
   "main": "main.js",
   "author": "",
   "license": "ISC",
