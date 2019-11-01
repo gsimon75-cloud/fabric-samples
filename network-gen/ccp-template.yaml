@@ -1,43 +1,43 @@
 ---
-name: first-network-org${ORG}
+name: first-network
 version: 1.0.0
 client:
-  organization: Org${ORG}
+  organization: ${ORG_NAME}
   connection:
     timeout:
       peer:
         endorser: '300'
 organizations:
-  Org${ORG}:
-    mspid: Org${ORG}MSP
+  ${ORG_NAME}:
+    mspid: ${ORG_NAME}-msp
     peers:
-    - peer0.org${ORG}.example.com
-    - peer1.org${ORG}.example.com
+    - peer0.${ORG_NAME}.${DOMAIN_NAME}
+    - peer1.${ORG_NAME}.${DOMAIN_NAME}
     certificateAuthorities:
-    - ca.org${ORG}.example.com
+    - ca.${ORG_NAME}.${DOMAIN_NAME}
 peers:
-  peer0.org${ORG}.example.com:
-    url: grpcs://localhost:${P0PORT}
+  peer0.${ORG_NAME}.${DOMAIN_NAME}:
+    url: grpcs://peer0.${ORG_NAME}.${DOMAIN_NAME}:${P0PORT}
     tlsCACerts:
       pem: |
-        ${PEERPEM}
+        ${TLSCA_CERT}
     grpcOptions:
-      ssl-target-name-override: peer0.org${ORG}.example.com
-      hostnameOverride: peer0.org${ORG}.example.com
-  peer1.org${ORG}.example.com:
-    url: grpcs://localhost:${P1PORT}
+      ssl-target-name-override: peer0.${ORG_NAME}.${DOMAIN_NAME}
+      hostnameOverride: peer0.${ORG_NAME}.${DOMAIN_NAME}
+  peer1.${ORG_NAME}.${DOMAIN_NAME}:
+    url: grpcs://peer1.${ORG_NAME}.${DOMAIN_NAME}:${P1PORT}
     tlsCACerts:
       pem: |
-        ${PEERPEM}
+        ${TLSCA_CERT}
     grpcOptions:
-      ssl-target-name-override: peer1.org${ORG}.example.com
-      hostnameOverride: peer1.org${ORG}.example.com
+      ssl-target-name-override: peer1.${ORG_NAME}.${DOMAIN_NAME}
+      hostnameOverride: peer1.${ORG_NAME}.${DOMAIN_NAME}
 certificateAuthorities:
-  ca.org${ORG}.example.com:
-    url: https://localhost:${CAPORT}
-    caName: ca-org${ORG}
+  ca.${ORG_NAME}.${DOMAIN_NAME}:
+    url: https://localhost:${CA_PORT}
+    caName: ca-${ORG_NAME}
     tlsCACerts:
       pem: |
-        ${CAPEM}
+        ${CA_CERT}
     httpOptions:
       verify: false
